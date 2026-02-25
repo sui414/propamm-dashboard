@@ -352,13 +352,12 @@ with tab3:
     # Create custom labels with formatted volumes for links
     link_labels = [format_volume(v) for v in all_values]
 
-    # Scale values to billions for cleaner display
-    values_in_billions = [v / 1e9 for v in all_values]
+    # Scale values to millions for display
+    values_in_millions = [v / 1e6 for v in all_values]
 
     # Create Sankey diagram
     fig_sankey = go.Figure(data=[go.Sankey(
-        valueformat="$.1f",
-        valuesuffix="B",
+        arrangement="snap",
         node=dict(
             pad=15,
             thickness=20,
@@ -369,17 +368,24 @@ with tab3:
         link=dict(
             source=all_sources,
             target=all_targets,
-            value=values_in_billions,
+            value=values_in_millions,
             customdata=link_labels,
             hovertemplate='%{source.label} → %{target.label}<br>%{customdata}<extra></extra>'
         )
     )])
+
+    # Override the default value format to show $M
+    fig_sankey.data[0].valueformat = "$,.0f"
+    fig_sankey.data[0].valuesuffix = "M"
 
     fig_sankey.update_layout(
         title_text="Frontend → DEX → Validator Flow (Volume USD)<br><sup>Purple = PropAMM | Red = DEX AMM</sup>",
         font_size=12,
         height=800
     )
+
+    # Set node label text color to white
+    fig_sankey.update_traces(textfont_color="white")
 
     st.plotly_chart(fig_sankey, use_container_width=True)
 
