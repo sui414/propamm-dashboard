@@ -3,9 +3,27 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-st.set_page_config(page_title="PropAMM Dashboard", layout="wide")
+st.set_page_config(page_title="Solana Orderflow Dashboard", layout="wide")
 
-st.title("PropAMM Dashboard")
+st.title("Solana Orderflow Dashboard")
+
+# Custom CSS to make tabs larger
+st.markdown("""
+<style>
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 8px;
+    }
+    .stTabs [data-baseweb="tab"] {
+        height: 60px;
+        padding: 10px 24px;
+        font-size: 18px;
+        font-weight: 500;
+    }
+    .stTabs [data-baseweb="tab-list"] button {
+        flex: 1;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # Create tabs
 tab1, tab2, tab3 = st.tabs(["📊 PropAMM Metrics", "📈 Intraday Block Position", "🔀 Orderflow Sankey"])
@@ -238,7 +256,49 @@ with tab3:
         )
         return df_sankey
 
-    df_sankey = load_sankey_data()
+    df_sankey_raw = load_sankey_data()
+
+    # PropAMM DEXes (separate from regular DEX AMMs)
+    propamm_dexes = {'humidifi', 'bisonfi', 'solfi', 'goonfi', 'tesserav', 'alphaq', 'aquifer', 'zerofi', 'lifinity'}
+
+    # Filters
+    st.subheader("Filters")
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+
+    all_frontends = sorted(df_sankey_raw["FRONTEND"].unique())
+    all_dexes_list = sorted(df_sankey_raw["DEX"].unique())
+    all_validators = sorted(df_sankey_raw["VALIDATOR_DISPLAY"].unique())
+
+    with filter_col1:
+        selected_frontends = st.multiselect(
+            "Frontend",
+            options=all_frontends,
+            default=all_frontends,
+            key="frontend_filter"
+        )
+
+    with filter_col2:
+        selected_dexes = st.multiselect(
+            "DEX",
+            options=all_dexes_list,
+            default=all_dexes_list,
+            key="dex_filter"
+        )
+
+    with filter_col3:
+        selected_validators = st.multiselect(
+            "Validator",
+            options=all_validators,
+            default=all_validators,
+            key="validator_filter"
+        )
+
+    # Apply filters
+    df_sankey = df_sankey_raw[
+        (df_sankey_raw["FRONTEND"].isin(selected_frontends)) &
+        (df_sankey_raw["DEX"].isin(selected_dexes)) &
+        (df_sankey_raw["VALIDATOR_DISPLAY"].isin(selected_validators))
+    ]
 
     # Aggregate Frontend -> DEX (sum across all validators)
     frontend_to_dex = df_sankey.groupby(["FRONTEND", "DEX"])["VOLUME_USD"].sum().reset_index()
@@ -247,14 +307,16 @@ with tab3:
     dex_to_validator = df_sankey.groupby(["DEX", "VALIDATOR_DISPLAY"])["VOLUME_USD"].sum().reset_index()
     dex_to_validator.columns = ["DEX", "VALIDATOR", "VOLUME_USD"]
 
-    # PropAMM DEXes (separate from regular DEX AMMs)
-    propamm_dexes = {'humidifi', 'bisonfi', 'solfi', 'goonfi', 'tesserav', 'alphaq', 'aquifer', 'zerofi', 'lifinity'}
+    # Check if data exists after filtering
+    if df_sankey.empty:
+        st.warning("No data available for the selected filters. Please adjust your selection.")
+        st.stop()
 
     # Build node list: Frontends, DEXes (PropAMM first, then others), Validators
     frontends = sorted(df_sankey["FRONTEND"].unique())
-    all_dexes = df_sankey["DEX"].unique()
-    propamm_list = sorted([d for d in all_dexes if d in propamm_dexes])
-    other_dexes = sorted([d for d in all_dexes if d not in propamm_dexes])
+    filtered_dexes = df_sankey["DEX"].unique()
+    propamm_list = sorted([d for d in filtered_dexes if d in propamm_dexes])
+    other_dexes = sorted([d for d in filtered_dexes if d not in propamm_dexes])
     dexes = propamm_list + other_dexes
     validators = sorted(df_sankey["VALIDATOR_DISPLAY"].unique())
 
