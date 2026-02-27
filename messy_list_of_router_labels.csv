@@ -1,0 +1,19 @@
+B3111yJCeHBcA1bizdJjUFPALfhAfSRnAbJzGUtnt56A, Binance Wallet
+T1TANpTeScyeqVzzgNViGDNrkQ6qHz9KrSBS4aNXvGT, Titan Exchange
+MEMS58mnNtbz3ZNt9Zp6GcKmN71qJaYDkVkvkUkQcPa, Arbitrage Bot (MEMS5)
+pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA, Pump.fun AMM
+
+
+case when trade_source='proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u' then 'OKX DEX Router'
+    when trade_source='GU8PbvWJe1U77L5uCQQAXzxQoyH2peR4DyKjrJnMVxut' then 'Arb bot GU8Pb'
+    when trade_source='cpamdpZCGKUy5JxQXB4dcpGPiikHawvSWAd6mEn1sGG' then 'Meteora DAMM v2'
+    when trade_source='JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4' then 'Jup v6'
+    when trade_source='dbcij3LWUppWqq96dh6gJWwBifmcGfLSB5D4DuSMaqN' then 'Meteora Dynamic Bonding Curve'
+    when trade_source='DF1ow4tspfHX9JwWJsAb9epbkA8hmpSEAtxXy1V27QBH' then 'DFlow v4'
+    when trade_source='BLUR9cL8HqZzu5bSaC7VRX25RCG93Hv3T6NPyKxQhWUT' then 'Axiom: Blur Route'
+    when trade_source='6m2CDdhRgxpH4WjvdzxAYbGxwdGUz5MziiL5jek2kBma' then 'OnChain Labs: DEX Router 1'
+    when trade_source='3s1rAymURnacreXreMy718GfqW6kygQsLNka1xDyW8pC' then 'Arb bot 3sr1A'
+    when trade_source='T1TANpTeScyeqVzzgNViGDNrkQ6qHz9KrSBS4aNXvGT' then 'Titan Exchange Router'
+    when trade_source='routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS' then 'Raydium AMM Routing'
+    when trade_source='NA365bsPdvZ8sP58qJ5QFg7eXygCe8aPRRxR9oeMbR5' then 'Arb bot NA365'
+    when trade_source='9Zzf9QqTy3TkyXysvJBsXyuRjda5aXCEJ9vXfL2HKSYv' then 'Arb bot 9Zzf9'

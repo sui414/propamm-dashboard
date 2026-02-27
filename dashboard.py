@@ -142,6 +142,134 @@ with tab1:
         "Total Fill Count": "{:,.0f}"
     }), use_container_width=True)
 
+    st.divider()
+
+    # =====================
+    # Trade Size Distribution
+    # =====================
+    st.header("Trade Size Distribution")
+
+    @st.cache_data
+    def load_trade_size_data():
+        df_size = pd.read_csv("propamm_trade_size_distribution.csv")
+        return df_size
+
+    df_trade_size = load_trade_size_data()
+
+    # Define bucket order
+    bucket_order = ['<$10', '$10-$100', '$100-$1K', '$1K-$10K', '$10K-$100K', '>$100K']
+
+    # Toggle for metric
+    size_metric = st.radio(
+        "Show by:",
+        options=["Volume (USD)", "Fill Count"],
+        horizontal=True,
+        key="trade_size_metric"
+    )
+    size_col = "VOLUME_USD" if size_metric == "Volume (USD)" else "FILL_COUNT"
+
+    size_col1, size_col2 = st.columns(2)
+
+    with size_col1:
+        # Stacked bar chart by project
+        fig_size_stack = px.bar(
+            df_trade_size,
+            x="PROJECT",
+            y=size_col,
+            color="TRADE_SIZE_BUCKET",
+            category_orders={"TRADE_SIZE_BUCKET": bucket_order},
+            title=f"Trade Size Distribution by Project ({size_metric})",
+            labels={size_col: size_metric, "PROJECT": "Project", "TRADE_SIZE_BUCKET": "Trade Size"}
+        )
+        fig_size_stack.update_layout(height=500, barmode='stack')
+        st.plotly_chart(fig_size_stack, use_container_width=True)
+
+    with size_col2:
+        # Normalized 100% stacked bar
+        df_size_pct = df_trade_size.copy()
+        df_size_pct["PCT"] = df_size_pct.groupby("PROJECT")[size_col].transform(lambda x: x / x.sum() * 100)
+
+        fig_size_pct = px.bar(
+            df_size_pct,
+            x="PROJECT",
+            y="PCT",
+            color="TRADE_SIZE_BUCKET",
+            category_orders={"TRADE_SIZE_BUCKET": bucket_order},
+            title=f"Trade Size Distribution % by Project",
+            labels={"PCT": "Percentage (%)", "PROJECT": "Project", "TRADE_SIZE_BUCKET": "Trade Size"}
+        )
+        fig_size_pct.update_layout(height=500, barmode='stack')
+        st.plotly_chart(fig_size_pct, use_container_width=True)
+
+    st.divider()
+
+    # =====================
+    # Trading Pairs Volume
+    # =====================
+    st.header("Trading Pairs Breakdown")
+
+    @st.cache_data
+    def load_pair_data():
+        df_pairs = pd.read_csv("propamm_pair_volume.csv")
+        # Clean up the TOKEN_PAIRS column (remove brackets and quotes)
+        df_pairs["TOKEN_PAIRS"] = df_pairs["TOKEN_PAIRS"].str.replace(r'[\[\]"]', '', regex=True)
+        df_pairs = df_pairs.dropna(subset=["VOLUME_USD"])
+        return df_pairs
+
+    df_pairs = load_pair_data()
+
+    # Project selector
+    pair_projects = sorted(df_pairs["PROJECT"].unique())
+    selected_project = st.selectbox("Select Project", pair_projects, key="pair_project_select")
+
+    pair_col1, pair_col2 = st.columns(2)
+
+    with pair_col1:
+        # Top pairs for selected project
+        project_pairs = df_pairs[df_pairs["PROJECT"] == selected_project].nlargest(15, "VOLUME_USD")
+
+        fig_pairs = px.bar(
+            project_pairs,
+            x="VOLUME_USD",
+            y="TOKEN_PAIRS",
+            orientation='h',
+            title=f"Top 15 Trading Pairs - {selected_project}",
+            labels={"VOLUME_USD": "Volume (USD)", "TOKEN_PAIRS": "Pair"}
+        )
+        fig_pairs.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_pairs, use_container_width=True)
+
+    with pair_col2:
+        # Pie chart of top pairs
+        fig_pairs_pie = px.pie(
+            project_pairs,
+            values="VOLUME_USD",
+            names="TOKEN_PAIRS",
+            title=f"Volume Share by Pair - {selected_project}"
+        )
+        fig_pairs_pie.update_traces(textposition='inside', textinfo='percent+label')
+        fig_pairs_pie.update_layout(height=500, showlegend=False)
+        st.plotly_chart(fig_pairs_pie, use_container_width=True)
+
+    # All projects pair comparison
+    st.subheader("Top Pairs Across All PropAMMs")
+
+    # Get top 5 pairs per project
+    top_pairs_all = df_pairs.groupby("PROJECT").apply(
+        lambda x: x.nlargest(5, "VOLUME_USD")
+    ).reset_index(drop=True)
+
+    fig_pairs_all = px.bar(
+        top_pairs_all,
+        x="PROJECT",
+        y="VOLUME_USD",
+        color="TOKEN_PAIRS",
+        title="Top 5 Pairs by Volume for Each PropAMM",
+        labels={"VOLUME_USD": "Volume (USD)", "PROJECT": "Project", "TOKEN_PAIRS": "Pair"}
+    )
+    fig_pairs_all.update_layout(height=500, barmode='group')
+    st.plotly_chart(fig_pairs_all, use_container_width=True)
+
 # ===================
 # TAB 2: Intraday Block Position Analysis
 # ===================
@@ -279,11 +407,10 @@ with tab3:
 
     # Filters
     st.subheader("Filters")
-    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
 
     all_frontends = sorted(df_sankey_raw["FRONTEND"].unique())
     all_dexes_list = sorted(df_sankey_raw["DEX"].unique())
-    all_validators = sorted(df_sankey_raw["VALIDATOR_DISPLAY"].unique())
     all_clients = sorted(df_sankey_raw["CLIENT"].unique())
 
     with filter_col1:
@@ -303,14 +430,6 @@ with tab3:
         )
 
     with filter_col3:
-        selected_validators = st.multiselect(
-            "Validator",
-            options=all_validators,
-            default=all_validators,
-            key="validator_filter"
-        )
-
-    with filter_col4:
         selected_clients = st.multiselect(
             "Client",
             options=all_clients,
@@ -322,7 +441,6 @@ with tab3:
     df_sankey = df_sankey_raw[
         (df_sankey_raw["FRONTEND"].isin(selected_frontends)) &
         (df_sankey_raw["DEX"].isin(selected_dexes)) &
-        (df_sankey_raw["VALIDATOR_DISPLAY"].isin(selected_validators)) &
         (df_sankey_raw["CLIENT"].isin(selected_clients))
     ]
 
@@ -334,25 +452,19 @@ with tab3:
     # Aggregate Frontend -> DEX (sum across all validators)
     frontend_to_dex = df_sankey.groupby(["FRONTEND", "DEX"])["VOLUME_USD"].sum().reset_index()
 
-    # Aggregate DEX -> Validator (sum across all frontends)
-    dex_to_validator = df_sankey.groupby(["DEX", "VALIDATOR_DISPLAY"])["VOLUME_USD"].sum().reset_index()
-    dex_to_validator.columns = ["DEX", "VALIDATOR", "VOLUME_USD"]
+    # Aggregate DEX -> Client (skip validator layer)
+    dex_to_client = df_sankey.groupby(["DEX", "CLIENT"])["VOLUME_USD"].sum().reset_index()
 
-    # Aggregate Validator -> Client
-    validator_to_client = df_sankey.groupby(["VALIDATOR_DISPLAY", "CLIENT"])["VOLUME_USD"].sum().reset_index()
-    validator_to_client.columns = ["VALIDATOR", "CLIENT", "VOLUME_USD"]
-
-    # Build node list: Frontends, DEXes (PropAMM first, then others), Validators, Clients
+    # Build node list: Frontends, DEXes (PropAMM first, then others), Clients
     frontends = sorted(df_sankey["FRONTEND"].unique())
     filtered_dexes = df_sankey["DEX"].unique()
     propamm_list = sorted([d for d in filtered_dexes if d in propamm_dexes])
     other_dexes = sorted([d for d in filtered_dexes if d not in propamm_dexes])
     dexes = propamm_list + other_dexes
-    validators = sorted(df_sankey["VALIDATOR_DISPLAY"].unique())
     clients = sorted(df_sankey["CLIENT"].unique())
 
     # Create node labels and indices
-    all_nodes = frontends + dexes + validators + clients
+    all_nodes = frontends + dexes + clients
     node_indices = {node: i for i, node in enumerate(all_nodes)}
 
     # Build links for Frontend -> DEX
@@ -360,20 +472,15 @@ with tab3:
     targets_1 = [node_indices[row["DEX"]] for _, row in frontend_to_dex.iterrows()]
     values_1 = frontend_to_dex["VOLUME_USD"].tolist()
 
-    # Build links for DEX -> Validator
-    sources_2 = [node_indices[row["DEX"]] for _, row in dex_to_validator.iterrows()]
-    targets_2 = [node_indices[row["VALIDATOR"]] for _, row in dex_to_validator.iterrows()]
-    values_2 = dex_to_validator["VOLUME_USD"].tolist()
-
-    # Build links for Validator -> Client
-    sources_3 = [node_indices[row["VALIDATOR"]] for _, row in validator_to_client.iterrows()]
-    targets_3 = [node_indices[row["CLIENT"]] for _, row in validator_to_client.iterrows()]
-    values_3 = validator_to_client["VOLUME_USD"].tolist()
+    # Build links for DEX -> Client
+    sources_2 = [node_indices[row["DEX"]] for _, row in dex_to_client.iterrows()]
+    targets_2 = [node_indices[row["CLIENT"]] for _, row in dex_to_client.iterrows()]
+    values_2 = dex_to_client["VOLUME_USD"].tolist()
 
     # Combine all links
-    all_sources = sources_1 + sources_2 + sources_3
-    all_targets = targets_1 + targets_2 + targets_3
-    all_values = values_1 + values_2 + values_3
+    all_sources = sources_1 + sources_2
+    all_targets = targets_1 + targets_2
+    all_values = values_1 + values_2
 
     # Assign colors by layer and type
     node_colors = []
@@ -383,7 +490,6 @@ with tab3:
             node_colors.append("#AB63FA")  # Purple for PropAMM
         else:
             node_colors.append("#EF553B")  # Red for regular DEX
-    node_colors.extend(["#00CC96"] * len(validators))  # Green for validators
     node_colors.extend(["#FFA15A"] * len(clients))  # Orange for clients
 
     # Create custom labels with formatted volumes for links
@@ -416,9 +522,9 @@ with tab3:
     fig_sankey.data[0].valuesuffix = "M"
 
     fig_sankey.update_layout(
-        title_text="Frontend → DEX → Validator → Client Flow (Volume USD)<br><sup>Purple = PropAMM | Red = DEX AMM | Green = Validators | Orange = Clients</sup>",
+        title_text="Frontend → DEX → Client Flow (Volume USD)<br><sup>Purple = PropAMM | Red = DEX AMM | Orange = Clients</sup>",
         font_size=12,
-        height=800
+        height=700
     )
 
     # Set node label text color to white
@@ -441,12 +547,10 @@ with tab3:
         st.dataframe(top_frontend_dex, use_container_width=True, hide_index=True)
 
     with col2:
-        st.write("**DEX → Validator**")
-        top_dex_validator = dex_to_validator[
-            ~dex_to_validator["VALIDATOR"].str.contains("Unlabeled", case=False, na=False)
-        ].sort_values("VOLUME_USD", ascending=False).head(10).copy()
-        top_dex_validator["VOLUME_USD"] = top_dex_validator["VOLUME_USD"].apply(format_volume)
-        st.dataframe(top_dex_validator, use_container_width=True, hide_index=True)
+        st.write("**DEX → Client**")
+        top_dex_client = dex_to_client.sort_values("VOLUME_USD", ascending=False).head(10).copy()
+        top_dex_client["VOLUME_USD"] = top_dex_client["VOLUME_USD"].apply(format_volume)
+        st.dataframe(top_dex_client, use_container_width=True, hide_index=True)
 
 # ===================
 # TAB 4: MEV Market Share
