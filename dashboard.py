@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Create tabs
-tab1, tab2, tab3 = st.tabs(["📊 PropAMM Metrics", "📈 Intraday Block Position", "🔀 Orderflow Sankey"])
+tab1, tab2, tab3, tab4 = st.tabs(["📊 PropAMM Metrics", "📈 Intraday Block Position", "🔀 Orderflow Sankey", "📉 MEV Market Share"])
 
 # Helper function to format volume as $XXM or $XXB
 def format_volume(val):
@@ -243,17 +243,33 @@ with tab3:
     def load_sankey_data():
         df_sankey = pd.read_csv("orderflow_sankey_7d_sample.csv")
 
-        # Group unlabeled validators (public key addresses) into one category
-        def is_labeled(name):
-            if len(name) > 30 and name.isalnum():
-                return False
-            if len(name) > 30 and all(c.isalnum() for c in name):
-                return False
-            return True
+        # Load validator mapping
+        df_validators = pd.read_csv("Validators All.csv")
 
-        df_sankey["VALIDATOR_DISPLAY"] = df_sankey["VALIDATOR"].apply(
-            lambda x: x if is_labeled(x) else "Unlabeled Validators"
-        )
+        # Create mapping from pubkey to name and client
+        validator_name_map = {}
+        validator_client_map = {}
+        for _, row in df_validators.iterrows():
+            pubkey = row["account"]
+            name = row["name"] if pd.notna(row["name"]) and row["name"].strip() != "" else None
+            client = row["softwareClient"] if pd.notna(row["softwareClient"]) else "Unknown Client"
+            validator_name_map[pubkey] = name
+            validator_client_map[pubkey] = client
+
+        # Map validators to display names
+        def get_validator_display(pubkey):
+            if pubkey in validator_name_map and validator_name_map[pubkey]:
+                return validator_name_map[pubkey]
+            else:
+                return "Unlabeled Validators"
+
+        # Map validators to clients
+        def get_validator_client(pubkey):
+            return validator_client_map.get(pubkey, "Unknown Client")
+
+        df_sankey["VALIDATOR_DISPLAY"] = df_sankey["VALIDATOR"].apply(get_validator_display)
+        df_sankey["CLIENT"] = df_sankey["VALIDATOR"].apply(get_validator_client)
+
         return df_sankey
 
     df_sankey_raw = load_sankey_data()
@@ -263,11 +279,12 @@ with tab3:
 
     # Filters
     st.subheader("Filters")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
+    filter_col1, filter_col2, filter_col3, filter_col4 = st.columns(4)
 
     all_frontends = sorted(df_sankey_raw["FRONTEND"].unique())
     all_dexes_list = sorted(df_sankey_raw["DEX"].unique())
     all_validators = sorted(df_sankey_raw["VALIDATOR_DISPLAY"].unique())
+    all_clients = sorted(df_sankey_raw["CLIENT"].unique())
 
     with filter_col1:
         selected_frontends = st.multiselect(
@@ -293,35 +310,49 @@ with tab3:
             key="validator_filter"
         )
 
+    with filter_col4:
+        selected_clients = st.multiselect(
+            "Client",
+            options=all_clients,
+            default=all_clients,
+            key="client_filter"
+        )
+
     # Apply filters
     df_sankey = df_sankey_raw[
         (df_sankey_raw["FRONTEND"].isin(selected_frontends)) &
         (df_sankey_raw["DEX"].isin(selected_dexes)) &
-        (df_sankey_raw["VALIDATOR_DISPLAY"].isin(selected_validators))
+        (df_sankey_raw["VALIDATOR_DISPLAY"].isin(selected_validators)) &
+        (df_sankey_raw["CLIENT"].isin(selected_clients))
     ]
-
-    # Aggregate Frontend -> DEX (sum across all validators)
-    frontend_to_dex = df_sankey.groupby(["FRONTEND", "DEX"])["VOLUME_USD"].sum().reset_index()
-
-    # Aggregate DEX -> Validator (sum across all frontends) - use display name
-    dex_to_validator = df_sankey.groupby(["DEX", "VALIDATOR_DISPLAY"])["VOLUME_USD"].sum().reset_index()
-    dex_to_validator.columns = ["DEX", "VALIDATOR", "VOLUME_USD"]
 
     # Check if data exists after filtering
     if df_sankey.empty:
         st.warning("No data available for the selected filters. Please adjust your selection.")
         st.stop()
 
-    # Build node list: Frontends, DEXes (PropAMM first, then others), Validators
+    # Aggregate Frontend -> DEX (sum across all validators)
+    frontend_to_dex = df_sankey.groupby(["FRONTEND", "DEX"])["VOLUME_USD"].sum().reset_index()
+
+    # Aggregate DEX -> Validator (sum across all frontends)
+    dex_to_validator = df_sankey.groupby(["DEX", "VALIDATOR_DISPLAY"])["VOLUME_USD"].sum().reset_index()
+    dex_to_validator.columns = ["DEX", "VALIDATOR", "VOLUME_USD"]
+
+    # Aggregate Validator -> Client
+    validator_to_client = df_sankey.groupby(["VALIDATOR_DISPLAY", "CLIENT"])["VOLUME_USD"].sum().reset_index()
+    validator_to_client.columns = ["VALIDATOR", "CLIENT", "VOLUME_USD"]
+
+    # Build node list: Frontends, DEXes (PropAMM first, then others), Validators, Clients
     frontends = sorted(df_sankey["FRONTEND"].unique())
     filtered_dexes = df_sankey["DEX"].unique()
     propamm_list = sorted([d for d in filtered_dexes if d in propamm_dexes])
     other_dexes = sorted([d for d in filtered_dexes if d not in propamm_dexes])
     dexes = propamm_list + other_dexes
     validators = sorted(df_sankey["VALIDATOR_DISPLAY"].unique())
+    clients = sorted(df_sankey["CLIENT"].unique())
 
     # Create node labels and indices
-    all_nodes = frontends + dexes + validators
+    all_nodes = frontends + dexes + validators + clients
     node_indices = {node: i for i, node in enumerate(all_nodes)}
 
     # Build links for Frontend -> DEX
@@ -334,10 +365,15 @@ with tab3:
     targets_2 = [node_indices[row["VALIDATOR"]] for _, row in dex_to_validator.iterrows()]
     values_2 = dex_to_validator["VOLUME_USD"].tolist()
 
+    # Build links for Validator -> Client
+    sources_3 = [node_indices[row["VALIDATOR"]] for _, row in validator_to_client.iterrows()]
+    targets_3 = [node_indices[row["CLIENT"]] for _, row in validator_to_client.iterrows()]
+    values_3 = validator_to_client["VOLUME_USD"].tolist()
+
     # Combine all links
-    all_sources = sources_1 + sources_2
-    all_targets = targets_1 + targets_2
-    all_values = values_1 + values_2
+    all_sources = sources_1 + sources_2 + sources_3
+    all_targets = targets_1 + targets_2 + targets_3
+    all_values = values_1 + values_2 + values_3
 
     # Assign colors by layer and type
     node_colors = []
@@ -348,6 +384,7 @@ with tab3:
         else:
             node_colors.append("#EF553B")  # Red for regular DEX
     node_colors.extend(["#00CC96"] * len(validators))  # Green for validators
+    node_colors.extend(["#FFA15A"] * len(clients))  # Orange for clients
 
     # Create custom labels with formatted volumes for links
     link_labels = [format_volume(v) for v in all_values]
@@ -379,13 +416,15 @@ with tab3:
     fig_sankey.data[0].valuesuffix = "M"
 
     fig_sankey.update_layout(
-        title_text="Frontend → DEX → Validator Flow (Volume USD)<br><sup>Purple = PropAMM | Red = DEX AMM</sup>",
+        title_text="Frontend → DEX → Validator → Client Flow (Volume USD)<br><sup>Purple = PropAMM | Red = DEX AMM | Green = Validators | Orange = Clients</sup>",
         font_size=12,
         height=800
     )
 
     # Set node label text color to white
     fig_sankey.update_traces(textfont_color="white")
+
+    st.caption("Validator labels sourced from [Anza Scheduler War](https://schedulerwar.vercel.app/)")
 
     st.plotly_chart(fig_sankey, use_container_width=True)
 
@@ -408,3 +447,503 @@ with tab3:
         ].sort_values("VOLUME_USD", ascending=False).head(10).copy()
         top_dex_validator["VOLUME_USD"] = top_dex_validator["VOLUME_USD"].apply(format_volume)
         st.dataframe(top_dex_validator, use_container_width=True, hide_index=True)
+
+# ===================
+# TAB 4: MEV Market Share
+# ===================
+with tab4:
+    st.header("MEV Market Share")
+
+    @st.cache_data
+    def load_mev_data():
+        df_mev = pd.read_csv("solana_mev_market_share.csv")
+        df_mev["DAY"] = pd.to_datetime(df_mev["DAY"])
+
+        # Load validator mapping
+        df_validators = pd.read_csv("Validators All.csv")
+
+        # Create mapping from pubkey to name, client, and stake
+        validator_name_map = {}
+        validator_client_map = {}
+        validator_stake_map = {}
+        for _, row in df_validators.iterrows():
+            pubkey = row["account"]
+            name = row["name"] if pd.notna(row["name"]) and str(row["name"]).strip() != "" else None
+            client = row["softwareClient"] if pd.notna(row["softwareClient"]) else "Unknown Client"
+            stake = row["activeStake"] if pd.notna(row["activeStake"]) else 0
+            validator_name_map[pubkey] = name
+            validator_client_map[pubkey] = client
+            validator_stake_map[pubkey] = stake
+
+        # Map validators to display names, clients, and stake
+        df_mev["VALIDATOR"] = df_mev["PUBKEY"].apply(
+            lambda x: validator_name_map.get(x) if validator_name_map.get(x) else "Unlabeled"
+        )
+        df_mev["CLIENT"] = df_mev["PUBKEY"].apply(
+            lambda x: validator_client_map.get(x, "Unknown Client")
+        )
+        df_mev["STAKE"] = df_mev["PUBKEY"].apply(
+            lambda x: validator_stake_map.get(x, 0)
+        )
+        # Calculate SOL per slot (mean)
+        df_mev["SOL_PER_SLOT"] = df_mev["SOLS"] / df_mev["SLOTS"].replace(0, 1)
+
+        return df_mev, validator_stake_map
+
+    df_mev, validator_stake_map = load_mev_data()
+
+    # =====================
+    # Summary KPIs
+    # =====================
+    st.subheader("Summary KPIs")
+    kpi_col1, kpi_col2, kpi_col3, kpi_col4, kpi_col5, kpi_col6 = st.columns(6)
+
+    total_sol = df_mev["SOLS"].sum()
+    total_slots = df_mev["SLOTS"].sum()
+    active_validators = df_mev["PUBKEY"].nunique()
+    avg_sol_per_slot = total_sol / total_slots if total_slots > 0 else 0
+    median_sol_per_slot = df_mev["SOL_MEDIAN"].median() if "SOL_MEDIAN" in df_mev.columns else 0
+    date_range = f"{df_mev['DAY'].min().strftime('%Y-%m-%d')} to {df_mev['DAY'].max().strftime('%Y-%m-%d')}"
+
+    with kpi_col1:
+        st.metric("Total SOL Extracted", f"{total_sol:,.2f}")
+    with kpi_col2:
+        st.metric("Total Slots", f"{total_slots:,.0f}")
+    with kpi_col3:
+        st.metric("Active Validators", f"{active_validators:,}")
+    with kpi_col4:
+        st.metric("Median SOL/Slot", f"{median_sol_per_slot:.4f}")
+    with kpi_col5:
+        st.metric("Avg SOL/Slot", f"{avg_sol_per_slot:.4f}")
+    with kpi_col6:
+        st.metric("Date Range", date_range)
+
+    st.divider()
+
+    # Toggles
+    toggle_col1, toggle_col2 = st.columns(2)
+    with toggle_col1:
+        metric_choice = st.radio(
+            "Select Metric",
+            options=["Slots Count", "Total SOLs Received"],
+            horizontal=True,
+            key="mev_metric_toggle"
+        )
+    with toggle_col2:
+        view_choice = st.radio(
+            "View Mode",
+            options=["Absolute Values", "Percentage (%)"],
+            horizontal=True,
+            key="mev_view_toggle"
+        )
+
+    metric_col = "SLOTS" if metric_choice == "Slots Count" else "SOLS"
+    metric_label = "Slots" if metric_choice == "Slots Count" else "SOL"
+    is_percentage = view_choice == "Percentage (%)"
+    groupnorm = "percent" if is_percentage else None
+    y_suffix = "%" if is_percentage else ""
+
+    # --- Chart 1: Market Share by Validator ---
+    st.subheader(f"Market Share by Validator ({metric_label})")
+
+    # Aggregate by day and validator (show all, no top N limit)
+    validator_daily = df_mev.groupby(["DAY", "VALIDATOR"])[metric_col].sum().reset_index()
+
+    # Pivot for stacked area
+    validator_pivot = validator_daily.pivot(
+        index="DAY", columns="VALIDATOR", values=metric_col
+    ).fillna(0)
+
+    # Sort columns by total (descending - biggest first for bottom of stack)
+    col_totals = validator_pivot.sum().sort_values(ascending=False)
+    sorted_cols = [c for c in col_totals.index if c != "Unlabeled"]
+    if "Unlabeled" in col_totals.index:
+        sorted_cols.append("Unlabeled")  # Unlabeled at end
+    validator_pivot = validator_pivot[sorted_cols]
+
+    # Calculate totals for pie chart
+    validator_totals = validator_pivot.sum().reset_index()
+    validator_totals.columns = ["Validator", "Total"]
+
+    # Layout: area chart + pie chart
+    val_col1, val_col2 = st.columns([3, 1])
+
+    with val_col1:
+        fig_validator = go.Figure()
+        hover_format = '%{y:.2f}%' if is_percentage else '%{y:,.0f}'
+        for col in validator_pivot.columns:
+            fig_validator.add_trace(go.Scatter(
+                name=col,
+                x=validator_pivot.index,
+                y=validator_pivot[col],
+                mode='lines',
+                stackgroup='one',
+                groupnorm=groupnorm,
+                hovertemplate=f'{col}: {hover_format}<extra></extra>'
+            ))
+
+        fig_validator.update_layout(
+            xaxis_title="Date",
+            yaxis_title=f"{metric_label} {y_suffix}".strip(),
+            legend_title="Validator",
+            height=600,
+            hovermode="x unified",
+            legend=dict(
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02,
+                bgcolor="rgba(0,0,0,0)",
+                traceorder="reversed",
+                font=dict(size=10),
+                itemsizing="constant"
+            ),
+            margin=dict(r=150)
+        )
+        st.plotly_chart(fig_validator, use_container_width=True, config={'scrollZoom': True})
+
+    with val_col2:
+        fig_val_pie = px.pie(
+            validator_totals,
+            values="Total",
+            names="Validator",
+            title="Total Share"
+        )
+        fig_val_pie.update_traces(textposition='inside', textinfo='percent')
+        fig_val_pie.update_layout(
+            showlegend=False,
+            height=500,
+            margin=dict(t=50, b=0, l=0, r=0)
+        )
+        st.plotly_chart(fig_val_pie, use_container_width=True)
+
+    # --- Chart 2: Market Share by Client ---
+    st.subheader(f"Market Share by Client ({metric_label})")
+
+    # Define client color mapping by family
+    client_color_map = {
+        # Jito family - Blues
+        "JitoLabs": "#1f77b4",
+        "AgaveBam": "#4a9fd4",
+        # Harmonic family - Greens
+        "Harmonic": "#2ca02c",
+        "HarmonicAgave": "#5fd35f",
+        # Frankendancer family - Oranges
+        "Frankendancer Vanilla": "#ff7f0e",
+        "Frankendancer Rev": "#ffb366",
+        # Agave - Purple
+        "Agave": "#9467bd",
+        # Firedancer - Red
+        "Firedancer": "#d62728",
+        # Rakurai - Pink
+        "Rakurai": "#e377c2",
+        # Unknown - Gray
+        "Unknown Client": "#7f7f7f"
+    }
+
+    # Define client group order for time series (families together)
+    client_group_order = [
+        "JitoLabs", "AgaveBam",
+        "Harmonic", "HarmonicAgave",
+        "Frankendancer Vanilla", "Frankendancer Rev",
+        "Agave", "Firedancer", "Rakurai", "Unknown Client"
+    ]
+
+    # Aggregate by day and client
+    client_daily = df_mev.groupby(["DAY", "CLIENT"])[metric_col].sum().reset_index()
+
+    # Pivot for stacked area
+    client_pivot = client_daily.pivot(
+        index="DAY", columns="CLIENT", values=metric_col
+    ).fillna(0)
+
+    # Sort columns by family group order (for time series)
+    available_clients = client_pivot.columns.tolist()
+    sorted_cols_client = [c for c in client_group_order if c in available_clients]
+    # Add any clients not in the predefined order
+    for c in available_clients:
+        if c not in sorted_cols_client:
+            sorted_cols_client.append(c)
+    client_pivot = client_pivot[sorted_cols_client]
+
+    # Calculate totals for pie chart (sorted by share)
+    client_totals = client_pivot.sum().sort_values(ascending=False).reset_index()
+    client_totals.columns = ["Client", "Total"]
+
+    # Layout: area chart + pie chart
+    cli_col1, cli_col2 = st.columns([3, 1])
+
+    with cli_col1:
+        fig_client = go.Figure()
+        for col in client_pivot.columns:
+            color = client_color_map.get(col, "#bcbd22")  # Default yellow-green for unknown
+            fig_client.add_trace(go.Scatter(
+                name=col,
+                x=client_pivot.index,
+                y=client_pivot[col],
+                mode='lines',
+                stackgroup='one',
+                groupnorm=groupnorm,
+                line=dict(color=color),
+                fillcolor=color,
+                hovertemplate=f'{col}: {hover_format}<extra></extra>'
+            ))
+
+        fig_client.update_layout(
+            xaxis_title="Date",
+            yaxis_title=f"{metric_label} {y_suffix}".strip(),
+            legend_title="Client",
+            height=600,
+            hovermode="x unified",
+            legend=dict(
+                yanchor="top",
+                y=1,
+                xanchor="left",
+                x=1.02,
+                bgcolor="rgba(0,0,0,0)",
+                traceorder="reversed",
+                font=dict(size=10),
+                itemsizing="constant"
+            ),
+            margin=dict(r=150)
+        )
+        st.plotly_chart(fig_client, use_container_width=True)
+
+    with cli_col2:
+        # Pie chart with same color mapping, sorted by share
+        pie_colors = [client_color_map.get(c, "#bcbd22") for c in client_totals["Client"]]
+        fig_cli_pie = go.Figure(data=[go.Pie(
+            labels=client_totals["Client"],
+            values=client_totals["Total"],
+            marker=dict(colors=pie_colors),
+            textposition='inside',
+            textinfo='percent',
+            sort=False  # Keep the order from client_totals (sorted by share)
+        )])
+        fig_cli_pie.update_layout(
+            title="Total Share",
+            showlegend=False,
+            height=500,
+            margin=dict(t=50, b=0, l=0, r=0)
+        )
+        st.plotly_chart(fig_cli_pie, use_container_width=True)
+
+    st.divider()
+
+    # =====================
+    # SOL per Slot Efficiency
+    # =====================
+    st.subheader("SOL per Slot Efficiency")
+
+    eff_col1, eff_col2 = st.columns(2)
+
+    with eff_col1:
+        # By Validator - Median only
+        validator_efficiency = df_mev.groupby("VALIDATOR").agg({
+            "SOL_MEDIAN": "median"
+        }).reset_index()
+        validator_efficiency = validator_efficiency.sort_values("SOL_MEDIAN", ascending=True).tail(20)
+
+        fig_val_eff = px.bar(
+            validator_efficiency,
+            y="VALIDATOR",
+            x="SOL_MEDIAN",
+            orientation='h',
+            title="Top 20 Validators by Median SOL/Slot",
+            labels={"SOL_MEDIAN": "Median SOL/Slot", "VALIDATOR": "Validator"}
+        )
+        fig_val_eff.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
+        st.plotly_chart(fig_val_eff, use_container_width=True)
+
+    with eff_col2:
+        # By Client - Median only
+        client_efficiency = df_mev.groupby("CLIENT").agg({
+            "SOL_MEDIAN": "median"
+        }).reset_index()
+        client_efficiency = client_efficiency.sort_values("SOL_MEDIAN", ascending=False)
+
+        fig_cli_eff = px.bar(
+            client_efficiency,
+            x="CLIENT",
+            y="SOL_MEDIAN",
+            title="Client Efficiency by Median SOL/Slot",
+            labels={"SOL_MEDIAN": "Median SOL/Slot", "CLIENT": "Client"},
+            color="SOL_MEDIAN",
+            color_continuous_scale="Viridis"
+        )
+        fig_cli_eff.update_layout(height=500, showlegend=False)
+        st.plotly_chart(fig_cli_eff, use_container_width=True)
+
+    # Median SOL/Slot over time
+    st.subheader("Median SOL/Slot Over Time")
+    daily_efficiency = df_mev.groupby("DAY").agg({
+        "SOL_MEDIAN": "median"
+    }).reset_index()
+
+    fig_median_time = px.line(
+        daily_efficiency,
+        x="DAY",
+        y="SOL_MEDIAN",
+        title="Daily Median SOL/Slot",
+        labels={"SOL_MEDIAN": "Median SOL/Slot", "DAY": "Date"}
+    )
+    fig_median_time.update_layout(height=400)
+    st.plotly_chart(fig_median_time, use_container_width=True)
+
+    st.divider()
+
+    # =====================
+    # Stake vs MEV Share Comparison
+    # =====================
+    st.subheader("Stake Share vs MEV Share (Who's Overperforming?)")
+
+    # Calculate MEV share and stake share by validator
+    validator_mev_total = df_mev.groupby("PUBKEY").agg({
+        "SOLS": "sum",
+        "SLOTS": "sum",
+        "VALIDATOR": "first",
+        "STAKE": "first"
+    }).reset_index()
+
+    # Filter out validators with no stake data
+    validator_mev_total = validator_mev_total[validator_mev_total["STAKE"] > 0]
+
+    total_mev = validator_mev_total["SOLS"].sum()
+    total_stake = validator_mev_total["STAKE"].sum()
+
+    validator_mev_total["MEV_SHARE"] = (validator_mev_total["SOLS"] / total_mev * 100) if total_mev > 0 else 0
+    validator_mev_total["STAKE_SHARE"] = (validator_mev_total["STAKE"] / total_stake * 100) if total_stake > 0 else 0
+    validator_mev_total["OVERPERFORMANCE"] = validator_mev_total["MEV_SHARE"] - validator_mev_total["STAKE_SHARE"]
+
+    # Scatter plot
+    fig_stake_mev = px.scatter(
+        validator_mev_total,
+        x="STAKE_SHARE",
+        y="MEV_SHARE",
+        hover_name="VALIDATOR",
+        size="SOLS",
+        color="OVERPERFORMANCE",
+        color_continuous_scale="RdYlGn",
+        color_continuous_midpoint=0,
+        labels={
+            "STAKE_SHARE": "Stake Share (%)",
+            "MEV_SHARE": "MEV Share (%)",
+            "OVERPERFORMANCE": "Overperformance (%)"
+        },
+        title="Stake Share vs MEV Share (above diagonal = overperforming)"
+    )
+    # Add diagonal line (y = x)
+    max_val = max(validator_mev_total["STAKE_SHARE"].max(), validator_mev_total["MEV_SHARE"].max())
+    fig_stake_mev.add_trace(go.Scatter(
+        x=[0, max_val],
+        y=[0, max_val],
+        mode='lines',
+        line=dict(dash='dash', color='gray'),
+        name='Fair Share (y=x)',
+        showlegend=True
+    ))
+    fig_stake_mev.update_layout(height=500)
+    st.plotly_chart(fig_stake_mev, use_container_width=True)
+
+    st.divider()
+
+    # =====================
+    # Market Concentration
+    # =====================
+    st.subheader("Market Concentration")
+
+    conc_col1, conc_col2 = st.columns(2)
+
+    with conc_col1:
+        # HHI over time (by validator)
+        daily_totals = df_mev.groupby("DAY")["SOLS"].sum().reset_index()
+        daily_totals.columns = ["DAY", "TOTAL_SOLS"]
+
+        validator_daily_sols = df_mev.groupby(["DAY", "VALIDATOR"])["SOLS"].sum().reset_index()
+        validator_daily_sols = validator_daily_sols.merge(daily_totals, on="DAY")
+        validator_daily_sols["SHARE"] = validator_daily_sols["SOLS"] / validator_daily_sols["TOTAL_SOLS"]
+        validator_daily_sols["SHARE_SQ"] = validator_daily_sols["SHARE"] ** 2
+
+        hhi_daily = validator_daily_sols.groupby("DAY")["SHARE_SQ"].sum().reset_index()
+        hhi_daily.columns = ["DAY", "HHI"]
+        hhi_daily["HHI"] = hhi_daily["HHI"] * 10000  # Scale to standard HHI (0-10000)
+
+        fig_hhi = px.line(
+            hhi_daily,
+            x="DAY",
+            y="HHI",
+            title="HHI Index Over Time (Validator Concentration)",
+            labels={"HHI": "HHI (0-10000)", "DAY": "Date"}
+        )
+        fig_hhi.add_hline(y=2500, line_dash="dash", line_color="orange", annotation_text="Highly Concentrated")
+        fig_hhi.add_hline(y=1500, line_dash="dash", line_color="green", annotation_text="Moderately Concentrated")
+        fig_hhi.update_layout(height=400)
+        st.plotly_chart(fig_hhi, use_container_width=True)
+
+    with conc_col2:
+        # Top 5/10 share over time
+        def calc_top_n_share(group, n):
+            total = group["SOLS"].sum()
+            top_n = group.nlargest(n, "SOLS")["SOLS"].sum()
+            return top_n / total * 100 if total > 0 else 0
+
+        top_share = df_mev.groupby("DAY").apply(
+            lambda x: pd.Series({
+                "Top 5 Share": calc_top_n_share(x, 5),
+                "Top 10 Share": calc_top_n_share(x, 10)
+            })
+        ).reset_index()
+
+        fig_top_share = go.Figure()
+        fig_top_share.add_trace(go.Scatter(
+            x=top_share["DAY"],
+            y=top_share["Top 5 Share"],
+            name="Top 5 Validators",
+            mode="lines+markers"
+        ))
+        fig_top_share.add_trace(go.Scatter(
+            x=top_share["DAY"],
+            y=top_share["Top 10 Share"],
+            name="Top 10 Validators",
+            mode="lines+markers"
+        ))
+        fig_top_share.update_layout(
+            title="Top N Validator Share Over Time",
+            xaxis_title="Date",
+            yaxis_title="Market Share (%)",
+            height=400
+        )
+        st.plotly_chart(fig_top_share, use_container_width=True)
+
+    st.divider()
+
+    # =====================
+    # Validator Leaderboard
+    # =====================
+    st.subheader("Validator Leaderboard")
+
+    leaderboard = df_mev.groupby("VALIDATOR").agg({
+        "SOLS": "sum",
+        "SLOTS": "sum",
+        "CLIENT": "first",
+        "SOL_MEDIAN": "median"
+    }).reset_index()
+    leaderboard["MEAN_SOL_PER_SLOT"] = leaderboard["SOLS"] / leaderboard["SLOTS"].replace(0, 1)
+    leaderboard["MEV_SHARE_%"] = leaderboard["SOLS"] / leaderboard["SOLS"].sum() * 100
+    leaderboard = leaderboard.sort_values("SOLS", ascending=False).reset_index(drop=True)
+    leaderboard.index = leaderboard.index + 1  # Start rank from 1
+    leaderboard.index.name = "Rank"
+
+    # Format columns
+    leaderboard_display = leaderboard.copy()
+    leaderboard_display["SOLS"] = leaderboard_display["SOLS"].apply(lambda x: f"{x:,.2f}")
+    leaderboard_display["SLOTS"] = leaderboard_display["SLOTS"].apply(lambda x: f"{x:,.0f}")
+    leaderboard_display["MEAN_SOL_PER_SLOT"] = leaderboard_display["MEAN_SOL_PER_SLOT"].apply(lambda x: f"{x:.4f}")
+    leaderboard_display["SOL_MEDIAN"] = leaderboard_display["SOL_MEDIAN"].apply(lambda x: f"{x:.4f}")
+    leaderboard_display["MEV_SHARE_%"] = leaderboard_display["MEV_SHARE_%"].apply(lambda x: f"{x:.2f}%")
+    leaderboard_display = leaderboard_display[["VALIDATOR", "SOLS", "SLOTS", "SOL_MEDIAN", "MEAN_SOL_PER_SLOT", "MEV_SHARE_%", "CLIENT"]]
+    leaderboard_display.columns = ["Validator", "Total SOL", "Total Slots", "Median SOL/Slot", "Mean SOL/Slot", "MEV Share", "Client"]
+
+    st.dataframe(leaderboard_display, use_container_width=True, height=400)
+
+    st.caption("Validator labels sourced from [Anza Scheduler War](https://schedulerwar.vercel.app/)")
