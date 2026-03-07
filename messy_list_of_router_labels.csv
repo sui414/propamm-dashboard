@@ -2,7 +2,8 @@ B3111yJCeHBcA1bizdJjUFPALfhAfSRnAbJzGUtnt56A, Binance Wallet
 T1TANpTeScyeqVzzgNViGDNrkQ6qHz9KrSBS4aNXvGT, Titan Exchange
 MEMS58mnNtbz3ZNt9Zp6GcKmN71qJaYDkVkvkUkQcPa, Arbitrage Bot (MEMS5)
 pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA, Pump.fun AMM
-
+6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P, Pump.fun
+ZERor4xhbUycZ6gb9ntrhqscUcZmAbQDjEAtCf4hbZY, ZeroFi
 
 case when trade_source='proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u' then 'OKX DEX Router'
     when trade_source='GU8PbvWJe1U77L5uCQQAXzxQoyH2peR4DyKjrJnMVxut' then 'Arb bot GU8Pb'
@@ -17,3 +18,30 @@ case when trade_source='proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u' then 'OKX D
     when trade_source='routeUGWgWzqBWFcrCfv8tritsqukccJPu3q5GPP3xS' then 'Raydium AMM Routing'
     when trade_source='NA365bsPdvZ8sP58qJ5QFg7eXygCe8aPRRxR9oeMbR5' then 'Arb bot NA365'
     when trade_source='9Zzf9QqTy3TkyXysvJBsXyuRjda5aXCEJ9vXfL2HKSYv' then 'Arb bot 9Zzf9'
+
+
+const FLOW_ROUTING_PROGRAMS: &[(&str, &str)] = &[
+    ("FLASHX8DrLbgeR8FcfNV1F5krxYcYMUdBkrP1EPBtxB9", "axiom"),
+    ("BSfD6SHZigAfDWSjzD5Q41jw8LmKwtmjskPH9XW1mrRW", "photon"),
+    ("term9YPb9mzAsABaqN71A4xdbxHmpBNZavpBiQKZzN3", "terminal"),
+    ("b1oomGGqPKGD6errbyfbVMBuzSC8WtAAYo8MwNafWW1", "bloom"),
+    ("troyXT7Ty3s2rjJe4bqWaroUrS4Fjd8rbHHNHxcACF4", "trojan"),
+    ("BANANAjs7FJiPQqJTGFzkZJndT9o7UmKiYYGaJz6frGu", "banana_gun"),
+    ("JUP6LkbZbjS1jKKwapdHNy74zcZ3tLUZoi5QNyVTaV4", "jupiter_v6"),
+    ("DF1ow4tspfHX9JwWJsAb9epbkA8hmpSEAtxXy1V27QBH", "dflow_v4"),
+    ("StenDH7EmnXdcniwsXgTWtN1ogfQksZ1C5UGBr7dNBG", "arb_bot_stend"),
+    ("NA247a7YE9S3p9CdKmMyETx8TTwbSdVbVYHHxpnHTUV", "arb_bot_na247"),
+    ("rexhfZLRRxRkPkw9izswgMFRPDb9U58jeinH7wqUVuw", "arb_bot_rexhf"),
+    ("MEViEnscUm6tsQRoGd9h6nLQaQspKj7DB2M5FwM3Xvz", "arb_bot_mevi"),
+    ("King7ki4SKMBPb3iupnQwTyjsq294jaXsgLmJo8cb7T", "arb_bot_king7"),
+    ("9GCBb4NsSDRuEkkGfQkN37oppmMVPops5sXDWhAKAvQQ", "arb_bot_9gcbb"),
+    ("MAyhSmzXzV1pTf7LsNkrNwkWKTo4ougAJ1PPg47MD4e", "pump_fun_mayhem"),
+    ("RaVenxw8kykBbW7KGBaBsb7fDkkBYK4uJVDSFun6ZxR", "raven_mev_bot"),
+    ("oudcgmYUjZtYriL9aUXoQdrLTMza3tD1s4CcycoQHjZ", "bot_oudcgm"),
+    ("proVF4pMXVaYqmy4NjniPh4pqKNfMmsihgd4wdkCX3u", "okx_labs_2"),
+    ("6m2CDdhRgxpH4WjvdzxAYbGxwdGUz5MziiL5jek2kBma", "okx_labs_1"),
+    ("BoobsBSMpFRBA91sNwKLYShRRQPH5GjoCH4NhLUt4yRo", "boobs_program"),
+    ("MEMS58mnNtbz3ZNt9Zp6GcKmN71qJaYDkVkvkUkQcPa", "arb_bot_mems5"),
+    ("A8g42Cw2RHEQztHTV18g3PcZYspyFLXzZPceAsF9gcux", "arb_bot_a8g42"),
+    ("T1TANpTeScyeqVzzgNViGDNrkQ6qHz9KrSBS4aNXvGT", "titan"),
+    ("jesterKqzZ7hWfNLnUDeB8WtMrm7a44g2vSyhs7WmyT", "jester_program")

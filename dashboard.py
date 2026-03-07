@@ -45,7 +45,7 @@ def format_volume(val):
 with tab1:
     @st.cache_data
     def load_data():
-        df = pd.read_csv("propamm_allium_initial_sample.csv")
+        df = pd.read_csv("propamm_allium_v2.csv")
         df["DATE"] = pd.to_datetime(df["DATE"])
         df = df.sort_values("DATE")
         return df
@@ -57,8 +57,45 @@ with tab1:
     color_map = px.colors.qualitative.Plotly + px.colors.qualitative.Set2
     project_colors = {proj: color_map[i % len(color_map)] for i, proj in enumerate(projects)}
 
+    # =====================
+    # DATE RANGE FILTER (Top-level)
+    # =====================
+    min_date = df["DATE"].min().date()
+    max_date = df["DATE"].max().date()
+
+    filter_col1, filter_col2 = st.columns(2)
+    with filter_col1:
+        start_date = st.date_input(
+            "Start Date",
+            value=min_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="propamm_start_date"
+        )
+    with filter_col2:
+        end_date = st.date_input(
+            "End Date",
+            value=max_date,
+            min_value=min_date,
+            max_value=max_date,
+            key="propamm_end_date"
+        )
+
+    # Filter data by date range
+    df_filtered = df[
+        (df["DATE"].dt.date >= start_date) &
+        (df["DATE"].dt.date <= end_date)
+    ]
+
+    st.divider()
+
+    # =====================
+    # TIME SERIES VIEW
+    # =====================
+    st.header("Time Series View")
+
     # Pivot data for stacked bar chart
-    volume_pivot = df.pivot_table(
+    volume_pivot = df_filtered.pivot_table(
         index="DATE",
         columns="PROJECT",
         values="VOLUME_USD",
@@ -66,7 +103,7 @@ with tab1:
     ).fillna(0)
 
     # Stacked Bar Chart - Volume
-    st.header("Volume (USD) by Project")
+    st.subheader("Volume (USD) by Project")
     fig_volume = go.Figure()
     for project in projects:
         if project in volume_pivot.columns:
@@ -87,17 +124,18 @@ with tab1:
     st.plotly_chart(fig_volume, use_container_width=True)
 
     # Line Chart - TX Count
-    st.header("Transaction Count by Project")
+    st.subheader("Transaction Count by Project")
     fig_tx = go.Figure()
     for project in projects:
-        project_data = df[df["PROJECT"] == project].sort_values("DATE")
-        fig_tx.add_trace(go.Scatter(
-            name=project,
-            x=project_data["DATE"],
-            y=project_data["TX_COUNT"],
-            mode="lines+markers",
-            line=dict(color=project_colors[project])
-        ))
+        project_data = df_filtered[df_filtered["PROJECT"] == project].sort_values("DATE")
+        if not project_data.empty:
+            fig_tx.add_trace(go.Scatter(
+                name=project,
+                x=project_data["DATE"],
+                y=project_data["TX_COUNT"],
+                mode="lines+markers",
+                line=dict(color=project_colors[project])
+            ))
 
     fig_tx.update_layout(
         xaxis_title="Date",
@@ -108,17 +146,18 @@ with tab1:
     st.plotly_chart(fig_tx, use_container_width=True)
 
     # Line Chart - Fill Count
-    st.header("Fill Count by Project")
+    st.subheader("Fill Count by Project")
     fig_fill = go.Figure()
     for project in projects:
-        project_data = df[df["PROJECT"] == project].sort_values("DATE")
-        fig_fill.add_trace(go.Scatter(
-            name=project,
-            x=project_data["DATE"],
-            y=project_data["FILL_COUNT"],
-            mode="lines+markers",
-            line=dict(color=project_colors[project])
-        ))
+        project_data = df_filtered[df_filtered["PROJECT"] == project].sort_values("DATE")
+        if not project_data.empty:
+            fig_fill.add_trace(go.Scatter(
+                name=project,
+                x=project_data["DATE"],
+                y=project_data["FILL_COUNT"],
+                mode="lines+markers",
+                line=dict(color=project_colors[project])
+            ))
 
     fig_fill.update_layout(
         xaxis_title="Date",
@@ -128,14 +167,20 @@ with tab1:
     )
     st.plotly_chart(fig_fill, use_container_width=True)
 
-    # Summary stats
+    st.divider()
+
+    # =====================
+    # SUMMARY STATISTICS
+    # =====================
     st.header("Summary Statistics")
-    summary = df.groupby("PROJECT").agg({
+
+    summary = df_filtered.groupby("PROJECT").agg({
         "VOLUME_USD": "sum",
         "TX_COUNT": "sum",
         "FILL_COUNT": "sum"
     }).round(2)
     summary.columns = ["Total Volume (USD)", "Total TX Count", "Total Fill Count"]
+    summary = summary.sort_values("Total Volume (USD)", ascending=False)
     st.dataframe(summary.style.format({
         "Total Volume (USD)": "${:,.2f}",
         "Total TX Count": "{:,.0f}",
@@ -145,9 +190,10 @@ with tab1:
     st.divider()
 
     # =====================
-    # Trade Size Distribution
+    # Trade Size Distribution (7d sample)
     # =====================
-    st.header("Trade Size Distribution")
+    st.header("Breakdown (7d Sample)")
+    st.subheader("Trade Size Distribution")
 
     @st.cache_data
     def load_trade_size_data():
@@ -206,7 +252,7 @@ with tab1:
     # =====================
     # Trading Pairs Volume
     # =====================
-    st.header("Trading Pairs Breakdown")
+    st.subheader("Trading Pairs Breakdown")
 
     @st.cache_data
     def load_pair_data():
@@ -368,8 +414,68 @@ with tab3:
     st.header("Orderflow Sankey (7d)")
 
     @st.cache_data
-    def load_sankey_data():
-        df_sankey = pd.read_csv("orderflow_sankey_7d_sample.csv")
+    def load_sankey_data(version=7):  # version param to bust cache
+        df_sankey = pd.read_csv("orderflow_sankey_7d_sample_v2.csv")
+
+        # Frontend name formatting
+        frontend_mapping = {
+            # Consolidate Jupiter Agg versions
+            "jupiter-aggregator-v4": "Jupiter Agg",
+            "jupiter-aggregator-v6": "Jupiter Agg",
+            # Consolidate OKX Agg versions
+            "okx-aggregator": "OKX Agg",
+            "okx-aggregator-v6": "OKX Agg",
+            # Consolidate Meteora variants
+            "Meteora DAMM v2": "Meteora Frontend",
+            "Meteora Dynamic Bonding Curve": "Meteora Frontend",
+            # Other formatting
+            "photon": "Photon",
+            "dflow-v4": "DFlow",
+            "drift": "Drift",
+            "raydium-router": "Raydium Router",
+            "ZeroFi": "ZeroFi Frontend",
+        }
+        df_sankey["FRONTEND"] = df_sankey["FRONTEND"].replace(frontend_mapping)
+
+        # Consolidate all Pump.fun variants to "Pump.fun Frontend"
+        df_sankey.loc[df_sankey["FRONTEND"].str.startswith("Pump.fun", na=False), "FRONTEND"] = "Pump.fun Frontend"
+
+        # DEX name formatting (title case for lowercase names)
+        dex_mapping = {
+            "alphaq": "AlphaQ",
+            "aquifer": "Aquifer",
+            "bisonfi": "BisonFi",
+            "byreal": "ByReal",
+            "cropper": "Cropper",
+            "dexscreener-moonshot": "Moonshot",
+            "fluxbeam": "FluxBeam",
+            "gamma": "Gamma",
+            "goonfi": "GoonFi",
+            "humidifi": "HumidiFi",
+            "invariant": "Invariant",
+            "jupiter": "Jupiter",
+            "manifest": "Manifest",
+            "marcopolo": "MarcoPolo",
+            "mercurial": "Mercurial",
+            "meteora": "Meteora",
+            "obric": "Obric",
+            "orca": "Orca",
+            "pancakeswap": "PancakeSwap",
+            "phoenix": "Phoenix",
+            "pumpfun": "Pump.fun",
+            "pumpswap": "PumpSwap",
+            "raydium": "Raydium",
+            "saber": "Saber",
+            "saros": "Saros",
+            "scorch": "Scorch",
+            "solfi": "SolFi",
+            "stabble": "Stabble",
+            "stepn": "STEPN",
+            "tesserav": "Tesserav",
+            "whalestreet": "WhaleStreet",
+            "zerofi": "ZeroFi",
+        }
+        df_sankey["DEX"] = df_sankey["DEX"].replace(dex_mapping)
 
         # Load validator mapping
         df_validators = pd.read_csv("Validators All.csv")
@@ -400,42 +506,61 @@ with tab3:
 
         return df_sankey
 
-    df_sankey_raw = load_sankey_data()
+    df_sankey_raw = load_sankey_data(version=7)
 
     # PropAMM DEXes (separate from regular DEX AMMs)
-    propamm_dexes = {'humidifi', 'bisonfi', 'solfi', 'goonfi', 'tesserav', 'alphaq', 'aquifer', 'zerofi', 'lifinity'}
+    propamm_dexes = {'HumidiFi', 'BisonFi', 'SolFi', 'GoonFi', 'Tesserav', 'AlphaQ', 'Aquifer', 'ZeroFi', 'Lifinity'}
 
     # Filters
     st.subheader("Filters")
-    filter_col1, filter_col2, filter_col3 = st.columns(3)
 
     all_frontends = sorted(df_sankey_raw["FRONTEND"].unique())
     all_dexes_list = sorted(df_sankey_raw["DEX"].unique())
     all_clients = sorted(df_sankey_raw["CLIENT"].unique())
 
+    # Select All checkboxes
+    selectall_col1, selectall_col2, selectall_col3 = st.columns(3)
+    with selectall_col1:
+        all_frontends_selected = st.checkbox("Select All Frontends", value=True, key="all_frontends_v3")
+    with selectall_col2:
+        all_dexes_selected = st.checkbox("Select All DEXes", value=True, key="all_dexes_v3")
+    with selectall_col3:
+        all_clients_selected = st.checkbox("Select All Clients", value=True, key="all_clients_v3")
+
+    filter_col1, filter_col2, filter_col3 = st.columns(3)
+
     with filter_col1:
-        selected_frontends = st.multiselect(
-            "Frontend",
-            options=all_frontends,
-            default=all_frontends,
-            key="frontend_filter"
-        )
+        if all_frontends_selected:
+            selected_frontends = all_frontends
+        else:
+            selected_frontends = st.multiselect(
+                "Frontend",
+                options=all_frontends,
+                default=[],
+                key="frontend_filter_v3"
+            )
 
     with filter_col2:
-        selected_dexes = st.multiselect(
-            "DEX",
-            options=all_dexes_list,
-            default=all_dexes_list,
-            key="dex_filter"
-        )
+        if all_dexes_selected:
+            selected_dexes = all_dexes_list
+        else:
+            selected_dexes = st.multiselect(
+                "DEX",
+                options=all_dexes_list,
+                default=[],
+                key="dex_filter_v3"
+            )
 
     with filter_col3:
-        selected_clients = st.multiselect(
-            "Client",
-            options=all_clients,
-            default=all_clients,
-            key="client_filter"
-        )
+        if all_clients_selected:
+            selected_clients = all_clients
+        else:
+            selected_clients = st.multiselect(
+                "Client",
+                options=all_clients,
+                default=[],
+                key="client_filter_v3"
+            )
 
     # Apply filters
     df_sankey = df_sankey_raw[
