@@ -26,7 +26,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # Create tabs
-tab1, tab2, tab3, tab4 = st.tabs(["📊 PropAMM Metrics", "📈 Intraday Block Position", "🔀 Orderflow Sankey", "📉 MEV Market Share"])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(["📊 PropAMM Metrics", "📈 Intraday Block Position", "🔀 Orderflow Sankey", "📉 MEV Market Share", "🧪 Aggregator Flow"])
 
 # Helper function to format volume as $XXM or $XXB
 def format_volume(val):
@@ -264,38 +264,19 @@ with tab1:
 
     df_pairs = load_pair_data()
 
-    # Project selector
-    pair_projects = sorted(df_pairs["PROJECT"].unique())
-    selected_project = st.selectbox("Select Project", pair_projects, key="pair_project_select")
+    # Aggregate volume by project
+    project_volume = df_pairs.groupby("PROJECT")["VOLUME_USD"].sum().reset_index()
+    project_volume = project_volume.sort_values("VOLUME_USD", ascending=False)
 
-    pair_col1, pair_col2 = st.columns(2)
-
-    with pair_col1:
-        # Top pairs for selected project
-        project_pairs = df_pairs[df_pairs["PROJECT"] == selected_project].nlargest(15, "VOLUME_USD")
-
-        fig_pairs = px.bar(
-            project_pairs,
-            x="VOLUME_USD",
-            y="TOKEN_PAIRS",
-            orientation='h',
-            title=f"Top 15 Trading Pairs - {selected_project}",
-            labels={"VOLUME_USD": "Volume (USD)", "TOKEN_PAIRS": "Pair"}
-        )
-        fig_pairs.update_layout(height=500, yaxis={'categoryorder': 'total ascending'})
-        st.plotly_chart(fig_pairs, use_container_width=True)
-
-    with pair_col2:
-        # Pie chart of top pairs
-        fig_pairs_pie = px.pie(
-            project_pairs,
-            values="VOLUME_USD",
-            names="TOKEN_PAIRS",
-            title=f"Volume Share by Pair - {selected_project}"
-        )
-        fig_pairs_pie.update_traces(textposition='inside', textinfo='percent+label')
-        fig_pairs_pie.update_layout(height=500, showlegend=False)
-        st.plotly_chart(fig_pairs_pie, use_container_width=True)
+    fig_project_pie = px.pie(
+        project_volume,
+        values="VOLUME_USD",
+        names="PROJECT",
+        title="Volume Share by PropAMM (7d)"
+    )
+    fig_project_pie.update_traces(textposition='inside', textinfo='percent+label')
+    fig_project_pie.update_layout(height=500, showlegend=False)
+    st.plotly_chart(fig_project_pie, use_container_width=True)
 
     # All projects pair comparison
     st.subheader("Top Pairs Across All PropAMMs")
@@ -310,10 +291,12 @@ with tab1:
         x="PROJECT",
         y="VOLUME_USD",
         color="TOKEN_PAIRS",
+        text="TOKEN_PAIRS",
         title="Top 5 Pairs by Volume for Each PropAMM",
         labels={"VOLUME_USD": "Volume (USD)", "PROJECT": "Project", "TOKEN_PAIRS": "Pair"}
     )
-    fig_pairs_all.update_layout(height=500, barmode='group')
+    fig_pairs_all.update_layout(height=500, barmode='stack')
+    fig_pairs_all.update_traces(textposition='inside', textfont_size=10)
     st.plotly_chart(fig_pairs_all, use_container_width=True)
 
 # ===================
@@ -414,7 +397,7 @@ with tab3:
     st.header("Orderflow Sankey (7d)")
 
     @st.cache_data
-    def load_sankey_data(version=7):  # version param to bust cache
+    def load_sankey_data(version=8):  # version param to bust cache
         df_sankey = pd.read_csv("orderflow_sankey_7d_sample_v2.csv")
 
         # Frontend name formatting
@@ -506,10 +489,10 @@ with tab3:
 
         return df_sankey
 
-    df_sankey_raw = load_sankey_data(version=7)
+    df_sankey_raw = load_sankey_data(version=8)
 
     # PropAMM DEXes (separate from regular DEX AMMs)
-    propamm_dexes = {'HumidiFi', 'BisonFi', 'SolFi', 'GoonFi', 'Tesserav', 'AlphaQ', 'Aquifer', 'ZeroFi', 'Lifinity'}
+    propamm_dexes = {'HumidiFi', 'BisonFi', 'SolFi', 'GoonFi', 'Tesserav', 'AlphaQ', 'Aquifer', 'ZeroFi', 'Lifinity', 'Scorch'}
 
     # Filters
     st.subheader("Filters")
@@ -1176,3 +1159,227 @@ with tab4:
     st.dataframe(leaderboard_display, use_container_width=True, height=400)
 
     st.caption("Validator labels sourced from [Anza Scheduler War](https://schedulerwar.vercel.app/)")
+
+# ===================
+# TAB 5: Tip Flow Analysis
+# ===================
+with tab5:
+    st.header("Frontend → Relayer → Client Flow")
+    st.caption("Data sample: March 1 to March 10 (2026)")
+
+    @st.cache_data
+    def load_tip_sankey_data_v6():
+        df_tip = pd.read_csv("sankey_tip_v3.csv")
+
+        # Load validator mapping for client info
+        df_validators = pd.read_csv("Validators All.csv")
+
+        # Create mapping from pubkey to name and client
+        validator_name_map = {}
+        validator_client_map = {}
+        for _, row in df_validators.iterrows():
+            pubkey = row["account"]
+            name = row["name"] if pd.notna(row["name"]) and str(row["name"]).strip() != "" else None
+            client = row["softwareClient"] if pd.notna(row["softwareClient"]) else "Unknown Client"
+            validator_name_map[pubkey] = name
+            validator_client_map[pubkey] = client
+
+        # Map validator pubkeys to display names and clients
+        df_tip["VALIDATOR_DISPLAY"] = df_tip["VALIDATOR"].apply(
+            lambda x: validator_name_map.get(x) if validator_name_map.get(x) else "Unlabeled"
+        )
+        df_tip["CLIENT"] = df_tip["VALIDATOR"].apply(
+            lambda x: validator_client_map.get(x, "Unknown Client")
+        )
+
+        # Group all Arb Bots into one label
+        df_tip.loc[df_tip["FRONTEND"].str.startswith("Arb Bot", na=False), "FRONTEND"] = "Arb Bots (grouped)"
+
+        # Format relayer names (capitalize first char)
+        df_tip["RELAYER"] = df_tip["RELAYER"].apply(lambda x: x.title() if pd.notna(x) and x else x)
+
+        # Fill NaN values
+        df_tip["RELAYER"] = df_tip["RELAYER"].fillna("Unknown Relayer")
+        df_tip["TOTAL_TIP"] = df_tip["TOTAL_TIP"].fillna(0)
+
+        # Get top 10 validators by total tip and group the rest as "Others"
+        validator_totals = df_tip.groupby("VALIDATOR_DISPLAY")["TOTAL_TIP"].sum().reset_index()
+        top_10_validators = validator_totals.nlargest(10, "TOTAL_TIP")["VALIDATOR_DISPLAY"].tolist()
+        df_tip["VALIDATOR_DISPLAY"] = df_tip["VALIDATOR_DISPLAY"].apply(
+            lambda x: x if x in top_10_validators else "Other Validators"
+        )
+
+        return df_tip
+
+    @st.cache_data
+    def load_tip_7d_data():
+        df_tip_7d = pd.read_csv("tip_7d.csv")
+        # Format relayer names (capitalize first char)
+        df_tip_7d["RELAYER"] = df_tip_7d["RELAYER"].apply(lambda x: x.title() if pd.notna(x) and x else x)
+        return df_tip_7d
+
+    df_tip_raw = load_tip_sankey_data_v6()
+    df_tip_7d = load_tip_7d_data()
+
+    st.divider()
+
+    # Filters with Select All
+    st.subheader("Filters")
+
+    all_frontends_tip = sorted(df_tip_raw["FRONTEND"].unique())
+    all_relayers_tip = sorted(df_tip_raw["RELAYER"].unique())
+    all_clients_tip = sorted(df_tip_raw["CLIENT"].unique())
+
+    # Select All checkboxes
+    selectall_tip_col1, selectall_tip_col2, selectall_tip_col3 = st.columns(3)
+    with selectall_tip_col1:
+        all_frontends_tip_selected = st.checkbox("Select All Frontends", value=True, key="all_frontends_tip_v7")
+    with selectall_tip_col2:
+        all_relayers_tip_selected = st.checkbox("Select All Relayers", value=True, key="all_relayers_tip_v7")
+    with selectall_tip_col3:
+        all_clients_tip_selected = st.checkbox("Select All Clients", value=True, key="all_clients_tip_v7")
+
+    filter_tip_col1, filter_tip_col2, filter_tip_col3 = st.columns(3)
+
+    with filter_tip_col1:
+        if all_frontends_tip_selected:
+            selected_frontends_tip = all_frontends_tip
+        else:
+            selected_frontends_tip = st.multiselect(
+                "Frontend",
+                options=all_frontends_tip,
+                default=[],
+                key="frontend_filter_tip_v7"
+            )
+
+    with filter_tip_col2:
+        if all_relayers_tip_selected:
+            selected_relayers_tip = all_relayers_tip
+        else:
+            selected_relayers_tip = st.multiselect(
+                "Relayer",
+                options=all_relayers_tip,
+                default=[],
+                key="relayer_filter_tip_v7"
+            )
+
+    with filter_tip_col3:
+        if all_clients_tip_selected:
+            selected_clients_tip = all_clients_tip
+        else:
+            selected_clients_tip = st.multiselect(
+                "Client",
+                options=all_clients_tip,
+                default=[],
+                key="client_filter_tip_v7"
+            )
+
+    # Apply filters
+    df_tip = df_tip_raw[
+        (df_tip_raw["FRONTEND"].isin(selected_frontends_tip)) &
+        (df_tip_raw["RELAYER"].isin(selected_relayers_tip)) &
+        (df_tip_raw["CLIENT"].isin(selected_clients_tip))
+    ]
+
+    if df_tip.empty:
+        st.warning("No data available for the selected filters. Please adjust your selection.")
+    else:
+        # Aggregate Frontend -> Relayer
+        frontend_to_relayer = df_tip.groupby(["FRONTEND", "RELAYER"]).agg({
+            "TOTAL_TIP": "sum"
+        }).reset_index()
+
+        # Aggregate Relayer -> Client
+        relayer_to_client = df_tip.groupby(["RELAYER", "CLIENT"]).agg({
+            "TOTAL_TIP": "sum"
+        }).reset_index()
+
+        # Build node list
+        frontends_tip_list = sorted(df_tip["FRONTEND"].unique())
+        relayers_tip_list = sorted(df_tip["RELAYER"].unique())
+        clients_tip_list = sorted(df_tip["CLIENT"].unique())
+
+        all_nodes_tip = frontends_tip_list + relayers_tip_list + clients_tip_list
+        node_indices_tip = {node: i for i, node in enumerate(all_nodes_tip)}
+
+        # Build links for Frontend -> Relayer
+        sources_1_tip = [node_indices_tip[row["FRONTEND"]] for _, row in frontend_to_relayer.iterrows()]
+        targets_1_tip = [node_indices_tip[row["RELAYER"]] for _, row in frontend_to_relayer.iterrows()]
+        values_1_tip = frontend_to_relayer["TOTAL_TIP"].tolist()
+
+        # Build links for Relayer -> Client
+        sources_2_tip = [node_indices_tip[row["RELAYER"]] for _, row in relayer_to_client.iterrows()]
+        targets_2_tip = [node_indices_tip[row["CLIENT"]] for _, row in relayer_to_client.iterrows()]
+        values_2_tip = relayer_to_client["TOTAL_TIP"].tolist()
+
+        # Combine all links
+        all_sources_tip = sources_1_tip + sources_2_tip
+        all_targets_tip = targets_1_tip + targets_2_tip
+        all_values_tip = values_1_tip + values_2_tip
+
+        # Create link labels
+        link_labels_tip = [f"{v:.2f} SOL" for v in all_values_tip]
+
+        # Assign node colors
+        node_colors_tip = []
+        # Frontend colors: blue for normal, red for Arb Bots (toxic flow)
+        for frontend in frontends_tip_list:
+            if frontend == "Arb Bots (grouped)":
+                node_colors_tip.append("#EF553B")  # Red for toxic/arb flow
+            else:
+                node_colors_tip.append("#636EFA")  # Blue for normal frontends
+
+        # Relayer colors: green
+        node_colors_tip.extend(["#00CC96"] * len(relayers_tip_list))
+
+        # Client colors: purple
+        node_colors_tip.extend(["#AB63FA"] * len(clients_tip_list))
+
+        # Create Sankey diagram
+        fig_tip_sankey = go.Figure(data=[go.Sankey(
+            arrangement="snap",
+            node=dict(
+                pad=15,
+                thickness=20,
+                line=dict(color="black", width=0.5),
+                label=all_nodes_tip,
+                color=node_colors_tip
+            ),
+            link=dict(
+                source=all_sources_tip,
+                target=all_targets_tip,
+                value=all_values_tip,
+                customdata=link_labels_tip,
+                hovertemplate='%{source.label} → %{target.label}<br>%{customdata}<extra></extra>'
+            )
+        )])
+
+        fig_tip_sankey.data[0].valueformat = ",.2f"
+        fig_tip_sankey.data[0].valuesuffix = " SOL"
+
+        fig_tip_sankey.update_layout(
+            title_text="Frontend → Relayer → Client Flow (Tip in SOL)<br><sup>Blue = Frontend | Red = Arb Bot | Green = Relayer | Purple = Client</sup>",
+            font_size=12,
+            height=700
+        )
+        fig_tip_sankey.update_traces(textfont_color="white")
+
+        st.plotly_chart(fig_tip_sankey, use_container_width=True)
+
+    st.divider()
+
+    # Bar chart for relayer tips
+    st.subheader("Relayer Tips Received (March 1-10, 2026)")
+
+    df_tip_7d_sorted = df_tip_7d.sort_values("TOTAL_TIP", ascending=True)
+
+    fig_relayer_tips = px.bar(
+        df_tip_7d_sorted,
+        x="TOTAL_TIP",
+        y="RELAYER",
+        orientation='h',
+        title="Total Tips by Relayer (SOL)",
+        labels={"TOTAL_TIP": "Total Tip (SOL)", "RELAYER": "Relayer"}
+    )
+    fig_relayer_tips.update_layout(height=400, yaxis={'categoryorder': 'total ascending'})
+    st.plotly_chart(fig_relayer_tips, use_container_width=True)
